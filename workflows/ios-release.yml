@@ -1,0 +1,80 @@
+name: Build and Distribute JiuLingManHuang iOS App #
+ 
+env:
+  SCHEME: JiuLingManHuang #文件夹名字
+  IPA_FILE_NAME: JiuLingManHuang.ipa #打出来的ipa名字
+  APPLE_USERNAME: pglrqpf@outlook.com #开发者账号
+  APPLE_ASC_PROVIDER: 43BF4F5QJ4 #teamid
+  PROJECT_NAME: JiuLingManHuang #target名字
+  WORKSPACE_NAME: JiuLingManHuang #xcode名字
+
+on:
+  push
+  
+jobs:
+  build:
+    name: build
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Install the Apple certificate and provisioning profile
+        env:
+          IOS_BUILD_CERTIFICATE_BASE64: ${{ secrets.IOS_BUILD_CERTIFICATE_BASE64 }}
+          IOS_BUILD_CERTIFICATE_PASSWORD: ${{ secrets.IOS_BUILD_CERTIFICATE_PASSWORD }}
+          IOS_MOBILE_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_MOBILE_PROVISIONING_PROFILE_BASE64 }}
+          IOS_GITHUB_KEYCHAIN_PASSWORD: ${{ secrets.IOS_GITHUB_KEYCHAIN_PASSWORD }}
+        run: |
+          # Import certificate and provisioning profile from secrets
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          echo -n "$IOS_BUILD_CERTIFICATE_BASE64" | base64 --decode > $CERTIFICATE_PATH
+          echo -n "$IOS_MOBILE_PROVISIONING_PROFILE_BASE64" | base64 --decode > $PP_PATH
+
+          security create-keychain -p "$IOS_GITHUB_KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$IOS_GITHUB_KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          security import $CERTIFICATE_PATH -P "$IOS_BUILD_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple: -k "$IOS_GITHUB_KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
+
+      - name: Show the list of profiles
+        run: ls ~/Library/MobileDevice/Provisioning\ Profiles
+
+      - name: Archive the Xcode project
+        run: |
+          cd ${{ env.PROJECT_NAME }}/frameworks/runtime-src/proj.ios_mac
+          xcodebuild archive -project ${{ env.PROJECT_NAME }}.xcodeproj -scheme ${{ env.SCHEME }} -archivePath ${{ github.workspace }}/${{ env.PROJECT_NAME }}.xcarchive
+
+      - name: Verify Archive Creation
+        run: |
+          echo "Expected Archive Path: ${{ github.workspace }}/${{ env.PROJECT_NAME }}.xcarchive"
+          ls -la ${{ github.workspace }}/${{ env.PROJECT_NAME }}.xcarchive
+
+      - name: xcodebuild -exportArchive
+        run: |
+          xcodebuild -exportArchive -archivePath ${{ github.workspace }}/${{ env.PROJECT_NAME }}.xcarchive -exportOptionsPlist ${{ env.PROJECT_NAME }}/ExportOptions.plist -exportPath ${{ github.workspace }}/output
+
+      - name: List directory after build
+        run: ls -la ${{ github.workspace }}/output
+
+      - name: Archive IPA
+        uses: actions/upload-artifact@v2
+        with:
+          name: release-ipa
+          path: ${{ github.workspace }}/output/${{ env.IPA_FILE_NAME }}
+
+      - name: Upload using iTMSTransporter
+        env:
+          APPLE_PASSWORD: ${{ secrets.APPLE_ACCOUNT_PASSWORD }}
+        run: |
+          git clone https://github.com/Gelalong/itsm.git
+          ./itsm/bin/iTMSTransporter -assetFile ${{ github.workspace }}/output/${{ env.IPA_FILE_NAME }} -u ${{ env.APPLE_USERNAME }} -p ${{ env.APPLE_PASSWORD }} -m upload -asc_provider ${{ env.APPLE_ASC_PROVIDER }}
