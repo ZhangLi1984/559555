@@ -1,0 +1,45 @@
+name: Build and Distribute
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - uses: subosito/flutter-action@v1
+        with:
+          flutter-version: '3.16.5' 
+
+      - uses: cedvdb/action-flutter-build-ios@v1
+        with:
+          # always use --export-options-plist=ios/GithubActionsExportOptions.plist
+          build-cmd: flutter build ipa --release --export-options-plist=ios/ExportOptions.plist
+          certificate-base64: ${{ secrets.IOS_BUILD_CERTIFICATE_BASE64 }}
+          certificate-password: ${{ secrets.IOS_BUILD_CERTIFICATE_PASSWORD }}
+          provisioning-profile-base64: ${{ secrets.IOS_MOBILE_PROVISIONING_PROFILE_BASE64 }}
+          keychain-password: ${{ secrets.IOS_GITHUB_KEYCHAIN_PASSWORD }}
+
+      - name: Archive IPA
+        uses: actions/upload-artifact@v2
+        with:
+          name: release-ipa
+          # Try running the build locally with the build command to be sure of this path
+          path: build/ios/ipa
+      
+      - name: Upload using iTMSTransporter
+        env:
+          WORKING_DIRECTORY: build/ios/ipa
+          IPA_FILE_NAME: sweetcam.ipa
+          APPLE_USERNAME: ganzhiwen02112@163.com
+          APPLE_PASSWORD: ${{ secrets.APPLE_ACCOUNT_PASSWORD }}
+          APPLE_ASC_PROVIDER: X8PJP6CV65
+        run: |
+          cd $WORKING_DIRECTORY
+          git clone https://github.com/Gelalong/itsm.git
+          ./itsm/bin/iTMSTransporter -assetFile $IPA_FILE_NAME -u $APPLE_USERNAME -p $APPLE_PASSWORD -m upload -asc_provider $APPLE_ASC_PROVIDER
